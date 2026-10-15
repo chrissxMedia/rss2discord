@@ -1,0 +1,5 @@
+snapshot: lts-24.55
+packages:
+- .
+extra-deps:
+- discord-haskell-1.19.0
