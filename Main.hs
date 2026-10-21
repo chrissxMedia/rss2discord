@@ -4,8 +4,11 @@ module Main where
 
 import Control.Concurrent (forkIO, newChan, readChan, threadDelay)
 import Control.Exception.Safe (IOException, SomeException, catchAny, displayException, fromException)
-import Control.Monad (foldM, forM, forever, unless)
+import Control.Monad (foldM, forM, forM_, forever, unless, when)
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy.Char8 as BL
+import qualified Data.Csv as Csv
+import Data.Foldable (toList)
 import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -28,17 +31,29 @@ import Text.Feed.Types (Feed (XMLFeed))
 
 type Seen = Set.Set Text
 
-feeds :: [(String, String)]
-feeds =
-  [ ("zerm", "https://zerm.eu/rss.xml")
-  , ("gock", "https://gock.dev/blog/rss.xml")
-  , ("chrissx", "https://chrissx.de/notices/rss.xml")
-  ]
+readFeeds :: FilePath -> IO [(String, String)]
+readFeeds file = do
+  contents <- BL.readFile file
+  -- Cassava accepts an unterminated quoted field at EOF.
+  unless (even (BL.count '"' contents)) $ fail "Invalid feeds CSV: unterminated quoted field."
+  feeds <- either (fail . ("Invalid feeds CSV: " <>)) (pure . toList) (Csv.decode Csv.NoHeader contents)
+  let names = map fst feeds
+  when (null feeds) $ fail "Feeds CSV must contain at least one feed."
+  unless (all (\name -> not (null name) && all (`elem` validNameChars) name) names) $
+    fail "Feed names must contain only ASCII letters, digits, hyphens or underscores."
+  unless (Set.size (Set.fromList names) == length names) $ fail "Feed names must be unique."
+  forM_ feeds $ \(name, url) -> do
+    request <- parseRequest url `catchAny` \_ -> fail ("Invalid URL for feed " <> name <> ".")
+    when (BS.null (host request)) $ fail ("Invalid URL for feed " <> name <> ".")
+  pure feeds
+  where
+    validNameChars = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
 
 main :: IO ()
 main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
   where
     run = do
+      feeds <- readFeeds "feeds.csv"
       (webhookId, webhookToken) <- readWebhook
       logs <- newChan
       _ <- forkIO $ forever (readChan logs)
@@ -46,7 +61,7 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
       createDirectoryIfMissing True seenDir
       seen <- forM feeds $ \(name, _) -> loadSeen (seenFile name)
       manager <- newTlsManager
-      loop manager (post rest webhookId webhookToken) seen
+      loop feeds manager (post rest webhookId webhookToken) seen
 
     readWebhook :: IO (Rest.WebhookId, Rest.WebhookToken)
     readWebhook = do
@@ -83,13 +98,13 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
         Left (Rest.RestCallInternalNoParse _ _) -> fail "Invalid Discord response."
         Left (Rest.RestCallInternalHttpException _) -> fail "Discord HTTP request failed."
 
-    loop :: Manager -> (Text -> IO ()) -> [Maybe Seen] -> IO ()
-    loop manager send states = do
+    loop :: [(String, String)] -> Manager -> (Text -> IO ()) -> [Maybe Seen] -> IO ()
+    loop feeds manager send states = do
       next <- forM (zip feeds states) $ \((name, url), state) ->
         (Just <$> pollFeed manager send url (seenFile name) state)
           `catchAny` \e -> fail ("Feed " <> name <> ": " <> errorMessage e)
       threadDelay (10 * 60 * 1000000)
-      loop manager send next
+      loop feeds manager send next
 
     errorMessage :: SomeException -> String
     errorMessage exception = case fromException exception :: Maybe IOException of

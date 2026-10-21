@@ -12,6 +12,7 @@ executable rss2discord
   build-depends:
     base >=4.14 && <5,
     bytestring,
+    cassava,
     containers,
     directory,
     discord-haskell ==1.19.0,
