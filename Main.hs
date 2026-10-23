@@ -21,6 +21,7 @@ import Network.HTTP.Types.Status (statusCode)
 import System.Directory (createDirectoryIfMissing, doesFileExist, renameFile)
 import System.Exit (die)
 import System.FilePath ((</>), (<.>))
+import System.IO (IOMode (ReadMode), withFile)
 import System.Timeout (timeout)
 import Text.Feed.Import (parseFeedSource)
 import Text.Feed.Query (feedItems, getItemDescription, getItemId, getItemLink, getItemTitle)
@@ -78,7 +79,7 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
     loadSeen :: FilePath -> IO (Maybe Seen)
     loadSeen file = do
       exists <- doesFileExist file
-      contents <- if exists then TextIO.readFile file else pure ""
+      contents <- if exists then withFile file ReadMode TextIO.hGetContents else pure ""
       let ids = filter (not . Text.null) (Text.lines contents)
       pure (if Text.null contents then Nothing else Just (Set.fromList ids))
 
@@ -89,6 +90,9 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
           `catchAny` \e -> do
             putStrLn ("Feed " <> feedName feed <> ": " <> errorMessage e)
             loadSeen (seenFile (feedName feed))
+              `catchAny` \reloadError -> do
+                putStrLn ("Unable to reload history for feed " <> feedName feed <> ": " <> errorMessage reloadError)
+                pure state
       threadDelay (10 * 60 * 1000000)
       loop feeds manager next
 
