@@ -86,7 +86,9 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
     loop feeds manager states = do
       next <- forM (zip feeds states) $ \(feed, state) ->
         (Just <$> pollFeed manager feed (seenFile (feedName feed)) state)
-          `catchAny` \e -> fail ("Feed " <> feedName feed <> ": " <> errorMessage e)
+          `catchAny` \e -> do
+            putStrLn ("Feed " <> feedName feed <> ": " <> errorMessage e)
+            loadSeen (seenFile (feedName feed))
       threadDelay (10 * 60 * 1000000)
       loop feeds manager next
 
