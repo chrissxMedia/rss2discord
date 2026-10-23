@@ -26,7 +26,7 @@ import System.FilePath ((</>), (<.>))
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 import Text.Feed.Import (parseFeedSource)
-import Text.Feed.Query (feedItems, getItemId, getItemLink, getItemTitle)
+import Text.Feed.Query (feedItems, getItemDescription, getItemId, getItemLink, getItemTitle)
 import Text.Feed.Types (Feed (XMLFeed))
 
 type Seen = Set.Set Text
@@ -132,7 +132,8 @@ fetchEntries manager url = do
       , Text.length link < 1000
       ] $ \(item, link) -> do
         let ident = Text.filter (`notElem` ['\r', '\n']) (valueOr link (snd <$> getItemId item))
-            title = Text.replace "@" "＠" (valueOr "New post" (getItemTitle item))
+            title = Text.replace "@" "＠" $
+              valueOr (valueOr "New post" (getItemDescription item)) (getItemTitle item)
         pure (ident, Text.take (999 - Text.length link) title <> "\n" <> link)
   where
     valueOr fallback value = let text = Text.strip (fromMaybe "" value)
