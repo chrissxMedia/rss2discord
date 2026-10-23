@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module DiscordWebhook (sendWebhook) where
 
@@ -19,7 +20,7 @@ import Text.Read (readMaybe)
 
 sendWebhook :: Manager -> String -> Text -> IO ()
 sendWebhook manager url content = do
-  request <- parseRequest url `catch` invalidUrl
+  request <- parseRequest url `catch` (\(_ :: HttpException) -> fail "Invalid Discord webhook URL.")
   unless (secure request && host request `elem` ["discord.com", "discordapp.com"] &&
           any (`BS.isPrefixOf` path request) ["/api/webhooks/", "/api/v10/webhooks/"] &&
           BS.null (queryString request)) $
@@ -36,10 +37,9 @@ sendWebhook manager url content = do
             , "allowed_mentions" .= object ["parse" .= (["everyone", "users", "roles"] :: [Text])]
             ]))
         , redirectCount = 0
-        , checkResponse = \_ _ -> pure ()
         , responseTimeout = responseTimeoutMicro deadline
         }
-  result <- timeout deadline (post outgoing `catch` requestFailure)
+  result <- timeout deadline (post outgoing `catch` (\(_ :: HttpException) -> fail "Discord HTTP request failed."))
   maybe (fail "Discord delivery timed out after 60 seconds.") pure result
   where
     deadline = 60 * 1000000
@@ -65,9 +65,3 @@ sendWebhook manager url content = do
         <|> header "X-RateLimit-Reset-After"
       where
         header name = lookup name (responseHeaders response) >>= readMaybe . BS.unpack
-
-    invalidUrl :: HttpException -> IO Request
-    invalidUrl _ = fail "Invalid Discord webhook URL."
-
-    requestFailure :: HttpException -> IO ()
-    requestFailure _ = fail "Discord HTTP request failed."

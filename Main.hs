@@ -55,9 +55,10 @@ readFeeds file = do
     validNameChars = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
 
     readFeed name url webhook prefix = do
-      forM_ [url, webhook] $ \address -> do
-        request <- parseRequest address `catchAny` \_ -> fail ("Invalid URL for feed " <> name <> ".")
-        when (BS.null (host request)) $ fail ("Invalid URL for feed " <> name <> ".")
+      forM_ [("feed URL", url), ("webhook URL", webhook)] $ \(field, address) -> do
+        let message = "Invalid " <> field <> " for feed " <> name <> "."
+        request <- parseRequest address `catchAny` \_ -> fail message
+        when (BS.null (host request)) $ fail message
       when (Text.length prefix >= 999) $ fail ("Prefix too long for feed " <> name <> ".")
       pure (FeedConfig name url webhook prefix)
 
@@ -84,8 +85,7 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
     loop :: [FeedConfig] -> Manager -> [Maybe Seen] -> IO ()
     loop feeds manager states = do
       next <- forM (zip feeds states) $ \(feed, state) ->
-        (Just <$> pollFeed manager (sendWebhook manager (feedWebhook feed))
-          (feedUrl feed) (feedPrefix feed) (seenFile (feedName feed)) state)
+        (Just <$> pollFeed manager feed (seenFile (feedName feed)) state)
           `catchAny` \e -> fail ("Feed " <> feedName feed <> ": " <> errorMessage e)
       threadDelay (10 * 60 * 1000000)
       loop feeds manager next
@@ -98,18 +98,18 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
         Just (HttpExceptionRequest _ _) -> "Feed HTTP request failed."
         Nothing -> "Unexpected failure."
 
-fetchEntries :: Manager -> String -> Text -> IO [(Text, Text)]
-fetchEntries manager url prefixText = do
-  request <- parseRequest url
+fetchEntries :: Manager -> FeedConfig -> IO [(Text, Text)]
+fetchEntries manager feed = do
+  request <- parseRequest (feedUrl feed)
   response <- maybe (fail "Feed request timed out.") pure =<< timeout (60 * 1000000) (httpLbs request manager)
   unless (statusCode (responseStatus response) == 200) $
     fail ("Feed request failed. HTTP " <> show (statusCode (responseStatus response)))
   case parseFeedSource (responseBody response) of
     Nothing -> fail "Invalid feed."
     Just (XMLFeed _) -> fail "Expected RSS or Atom."
-    Just feed -> forM
+    Just parsed -> forM
       [ (item, link)
-      | item <- feedItems feed
+      | item <- feedItems parsed
       , let link = Text.strip (fromMaybe "" (getItemLink item))
       , not (Text.null link)
       -- Keep room for the newline and characters Discord counts twice.
@@ -123,13 +123,13 @@ fetchEntries manager url prefixText = do
             titleLimit = 999 - Text.length prefix - Text.length link
         pure (ident, prefix <> Text.take titleLimit title <> "\n" <> link)
   where
-    prefix = if Text.null prefixText then "" else prefixText <> " "
+    prefix = if Text.null (feedPrefix feed) then "" else feedPrefix feed <> " "
     valueOr fallback value = let text = Text.strip (fromMaybe "" value)
                              in if Text.null text then fallback else text
 
-pollFeed :: Manager -> (Text -> IO ()) -> String -> Text -> FilePath -> Maybe Seen -> IO Seen
-pollFeed manager post url prefix seenFile seen = do
-  entries <- fetchEntries manager url prefix
+pollFeed :: Manager -> FeedConfig -> FilePath -> Maybe Seen -> IO Seen
+pollFeed manager feed seenFile seen = do
+  entries <- fetchEntries manager feed
   case seen of
     Nothing -> do
       let state = Set.fromList (map fst entries)
@@ -143,7 +143,7 @@ pollFeed manager post url prefix seenFile seen = do
     step state (ident, content)
       | Set.member ident state = pure state
       | otherwise = do
-          post content
+          sendWebhook manager (feedWebhook feed) content
           -- shortcut: interrupted appends can leave a partial last line, use atomic writes before deploying.
           TextIO.appendFile seenFile (ident <> "\n")
           pure (Set.insert ident state)
