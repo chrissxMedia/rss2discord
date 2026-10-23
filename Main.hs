@@ -1,12 +1,10 @@
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
 
-import Control.Concurrent (forkIO, newChan, readChan, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Exception.Safe (IOException, SomeException, catchAny, displayException, fromException)
-import Control.Monad (foldM, forM, forever, unless, when)
-import Data.Aeson (object, (.=))
+import Control.Monad (foldM, forM, forM_, unless, when)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Csv as Csv
@@ -16,17 +14,14 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
-import qualified Discord.Internal.Rest as Rest
-import qualified Discord.Internal.Rest.Prelude as Rest
+import DiscordWebhook (sendWebhook)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (newTlsManager)
-import qualified Network.HTTP.Req as Req
 import Network.HTTP.Types.Status (statusCode)
 import System.Directory (createDirectoryIfMissing, doesFileExist, renameFile)
 import System.Exit (die)
 import System.FilePath ((</>), (<.>))
 import System.Timeout (timeout)
-import Text.Read (readMaybe)
 import Text.Feed.Import (parseFeedSource)
 import Text.Feed.Query (feedItems, getItemDescription, getItemId, getItemLink, getItemTitle)
 import Text.Feed.Types (Feed (XMLFeed))
@@ -36,24 +31,9 @@ type Seen = Set.Set Text
 data FeedConfig = FeedConfig
   { feedName :: String
   , feedUrl :: String
-  , feedWebhookId :: Rest.WebhookId
-  , feedWebhookToken :: Rest.WebhookToken
+  , feedWebhook :: String
   , feedPrefix :: Text
   }
-
--- The library's webhook options don't expose allowed_mentions or wait=true.
-data WebhookRequest a where
-  SendWebhook :: Rest.WebhookId -> Rest.WebhookToken -> Text -> WebhookRequest Rest.Message
-
-instance Rest.Request (WebhookRequest a) where
-  majorRoute (SendWebhook ident _ _) = "executehk " <> show ident
-  jsonRequest (SendWebhook ident token content) = Rest.Post
-    (Rest.baseUrl Req./: "webhooks" Req./~ ident Req./~ token)
-    (pure (Req.ReqBodyJson (object
-      [ "content" .= content
-      , "allowed_mentions" .= object ["parse" .= (["everyone", "users", "roles"] :: [Text])]
-      ])))
-    ("wait" Req.=: True)
 
 readFeeds :: FilePath -> IO [FeedConfig]
 readFeeds file = do
@@ -75,35 +55,21 @@ readFeeds file = do
     validNameChars = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
 
     readFeed name url webhook prefix = do
-      request <- parseRequest url `catchAny` \_ -> fail ("Invalid URL for feed " <> name <> ".")
-      when (BS.null (host request)) $ fail ("Invalid URL for feed " <> name <> ".")
-      (ident, token) <- readWebhook webhook `catchAny` \_ -> fail ("Invalid webhook URL for feed " <> name <> ".")
+      forM_ [url, webhook] $ \address -> do
+        request <- parseRequest address `catchAny` \_ -> fail ("Invalid URL for feed " <> name <> ".")
+        when (BS.null (host request)) $ fail ("Invalid URL for feed " <> name <> ".")
       when (Text.length prefix >= 999) $ fail ("Prefix too long for feed " <> name <> ".")
-      pure (FeedConfig name url ident token prefix)
-
-readWebhook :: String -> IO (Rest.WebhookId, Rest.WebhookToken)
-readWebhook url = do
-  webhook <- parseRequest url
-  credentials <- case reverse (BS.split '/' (path webhook)) of
-    token : ident : "webhooks" : _ | not (BS.null token) -> do
-      ident' <- maybe (fail "Invalid webhook ID.") pure (readMaybe (BS.unpack ident))
-      pure (ident', Rest.DiscordToken (Text.pack (BS.unpack token)))
-    _ -> fail "Invalid webhook URL."
-  unless (BS.null (queryString webhook)) $ fail "Webhook URL query parameters aren't supported."
-  pure credentials
+      pure (FeedConfig name url webhook prefix)
 
 main :: IO ()
 main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
   where
     run = do
       feeds <- readFeeds "feeds.csv"
-      logs <- newChan
-      _ <- forkIO $ forever (readChan logs)
-      (rest, _) <- Rest.startRestThread (Rest.Auth "") logs
       createDirectoryIfMissing True seenDir
       seen <- forM feeds $ \feed -> loadSeen (seenFile (feedName feed))
       manager <- newTlsManager
-      loop feeds manager rest seen
+      loop feeds manager seen
 
     seenDir = "/data"
     seenFile name = seenDir </> name <.> "txt"
@@ -115,25 +81,14 @@ main = run `catchAny` \e -> die ("RSS polling failed. " <> errorMessage e)
       let ids = filter (not . Text.null) (Text.lines contents)
       pure (if Text.null contents then Nothing else Just (Set.fromList ids))
 
-    post :: Rest.RestChanHandle -> Rest.WebhookId -> Rest.WebhookToken -> Text -> IO ()
-    post rest webhookId webhookToken content = do
-      -- A timed-out call stays queued, so let the failure terminate the process.
-      result <- maybe (fail "Discord delivery timed out after 60 seconds.") pure =<<
-        timeout (60 * 1000000) (Rest.writeRestCall rest $ SendWebhook webhookId webhookToken content)
-      case result of
-        Right _ -> pure ()
-        Left (Rest.RestCallInternalErrorCode code _ _) -> fail ("Discord delivery failed. HTTP " <> show code)
-        Left (Rest.RestCallInternalNoParse _ _) -> fail "Invalid Discord response."
-        Left (Rest.RestCallInternalHttpException _) -> fail "Discord HTTP request failed."
-
-    loop :: [FeedConfig] -> Manager -> Rest.RestChanHandle -> [Maybe Seen] -> IO ()
-    loop feeds manager rest states = do
+    loop :: [FeedConfig] -> Manager -> [Maybe Seen] -> IO ()
+    loop feeds manager states = do
       next <- forM (zip feeds states) $ \(feed, state) ->
-        (Just <$> pollFeed manager (post rest (feedWebhookId feed) (feedWebhookToken feed))
+        (Just <$> pollFeed manager (sendWebhook manager (feedWebhook feed))
           (feedUrl feed) (feedPrefix feed) (seenFile (feedName feed)) state)
           `catchAny` \e -> fail ("Feed " <> feedName feed <> ": " <> errorMessage e)
       threadDelay (10 * 60 * 1000000)
-      loop feeds manager rest next
+      loop feeds manager next
 
     errorMessage :: SomeException -> String
     errorMessage exception = case fromException exception :: Maybe IOException of

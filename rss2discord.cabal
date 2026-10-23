@@ -7,6 +7,7 @@ build-type: Simple
 
 executable rss2discord
   main-is: Main.hs
+  other-modules: DiscordWebhook
   default-language: Haskell2010
   ghc-options: -Wall -threaded
   build-depends:
@@ -16,12 +17,10 @@ executable rss2discord
     cassava,
     containers,
     directory,
-    discord-haskell ==1.19.0,
     feed,
     filepath,
     http-client,
     http-client-tls,
     http-types,
-    req,
     safe-exceptions,
     text
