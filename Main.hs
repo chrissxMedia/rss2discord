@@ -158,8 +158,10 @@ fetchEntries manager url prefixText = do
       , let link = Text.strip (fromMaybe "" (getItemLink item))
       , not (Text.null link)
       -- Keep room for the newline and characters Discord counts twice.
-      , Text.length prefix + Text.length link < 1000
+      , Text.length link < 1000
       ] $ \(item, link) -> do
+        when (Text.length prefix + Text.length link >= 1000) $
+          fail "Prefix and feed link exceed the message length limit."
         let ident = Text.filter (`notElem` ['\r', '\n']) (valueOr link (snd <$> getItemId item))
             title = Text.replace "@" "＠" $
               valueOr (valueOr "New post" (getItemDescription item)) (getItemTitle item)

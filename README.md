@@ -3,7 +3,8 @@
 Poll RSS and Atom feeds every ten minutes and send new posts to Discord
 webhooks.
 
-Put one feed per line in [feeds.csv](feeds.csv), without a header:
+Copy [feeds.example.csv](feeds.example.csv) to `feeds.csv` and edit it, with one
+feed per line and no header:
 
 ```text
 name,feed_url,webhook_url[,prefix]
@@ -18,7 +19,7 @@ feeds skip existing posts and send only new ones to Discord.
 
 ```sh
 mkdir -p data
-cp -n feeds.csv data/
+cp -n feeds.example.csv data/feeds.csv
 chmod 600 data/feeds.csv
 docker run -v "$PWD/data:/data" chrissx/rss2discord:latest
 ```
