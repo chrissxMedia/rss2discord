@@ -1,3 +1,5 @@
 .stack-work/
 dist-newstyle/
 /rss2discord
+/data/
+/feeds.csv
