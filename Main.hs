@@ -7,6 +7,7 @@ import Control.Exception.Safe (IOException, SomeException, catchAny, displayExce
 import Control.Monad (foldM, forM, forM_, unless, when)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
+import Data.Char (isControl, isSpace)
 import qualified Data.Csv as Csv
 import Data.Foldable (toList)
 import Data.Maybe (fromMaybe)
@@ -117,7 +118,9 @@ fetchEntries manager feed = do
       [ (item, link)
       | item <- feedItems parsed
       , let link = Text.strip (fromMaybe "" (getItemLink item))
-      , not (Text.null link)
+      , Just target <- [parseRequest (Text.unpack link) :: Maybe Request]
+      , not (BS.null (host target))
+      , not (Text.any (\c -> isSpace c || isControl c || c `elem` ['<', '>']) link)
       -- Keep room for the newline and characters Discord counts twice.
       , Text.length link < 1000
       ] $ \(item, link) -> do
