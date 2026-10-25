@@ -7,7 +7,8 @@ build-type: Simple
 
 executable rss2discord
   main-is: Main.hs
-  other-modules: DiscordWebhook
+  other-modules: DiscordWebhook, Paths_rss2discord
+  autogen-modules: Paths_rss2discord
   default-language: Haskell2010
   ghc-options: -Wall -threaded
   build-depends:

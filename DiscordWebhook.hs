@@ -13,8 +13,10 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Version (showVersion)
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
+import Paths_rss2discord (version)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
@@ -30,7 +32,7 @@ sendWebhook manager url content = do
         , queryString = "?wait=true"
         , requestHeaders =
             [ ("Content-Type", "application/json")
-            , ("User-Agent", "DiscordBot (https://github.com/chrissxMedia/rss2discord, 0.1.0.0)")
+            , ("User-Agent", "DiscordBot (https://github.com/chrissxMedia/rss2discord, " <> BS.pack (showVersion version) <> ")")
             ]
         , requestBody = RequestBodyLBS (encode (object
             [ "content" .= content
