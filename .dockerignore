@@ -1,6 +1,9 @@
 *
 !Main.hs
 !DiscordWebhook.hs
+!Feed.hs
+!FeedConfig.hs
+!History.hs
 !LICENSE
 !rss2discord.cabal
 !stack.yaml
