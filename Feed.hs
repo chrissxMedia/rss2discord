@@ -50,24 +50,28 @@ fetchEntries manager feed = do
     valueOr fallback value = let text = Text.strip (fromMaybe "" value)
                              in if Text.null text then fallback else text
 
-pollFeed :: Manager -> History -> FeedConfig -> IO ()
-pollFeed manager history feed = do
+pollFeed :: IO Bool -> Manager -> History -> FeedConfig -> IO ()
+pollFeed shouldStop manager history feed = do
   entries <- fetchEntries manager feed
-  initialized <- initializeFeed history url entries
-  unless initialized $ forM_ (reverse entries) $ \(ident, content) -> do
-    previous <- lookupItem history url ident
-    case previous of
-      Nothing -> do
-        messageId <- sendWebhook manager webhook content
-        -- shortcut: a crash between sending and saving can duplicate a message, revisit if Discord adds idempotent sends.
-        saveItem history (ItemState url ident (Just messageId) content)
-      Just item -> case itemStateMessageId item of
-        Just messageId | itemStateContent item /= content -> do
-          result <- tryAny (editWebhook manager webhook messageId content)
-          case result of
-            Left err -> putStrLn ("Feed " <> feedUrl feed <> ", item " <> Text.unpack ident <> ": " <> displayException err)
-            Right () -> saveItem history (item { itemStateContent = content })
-        _ -> pure ()
+  stopped <- shouldStop
+  unless stopped $ do
+    initialized <- initializeFeed history url entries
+    unless initialized $ forM_ (reverse entries) $ \(ident, content) -> do
+      stopping <- shouldStop
+      unless stopping $ do
+        previous <- lookupItem history url ident
+        case previous of
+          Nothing -> do
+            messageId <- sendWebhook manager webhook content
+            -- shortcut: a crash between sending and saving can duplicate a message, revisit if Discord adds idempotent sends.
+            saveItem history (ItemState url ident (Just messageId) content)
+          Just item -> case itemStateMessageId item of
+            Just messageId | itemStateContent item /= content -> do
+              result <- tryAny (editWebhook manager webhook messageId content)
+              case result of
+                Left err -> putStrLn ("Feed " <> feedUrl feed <> ", item " <> Text.unpack ident <> ": " <> displayException err)
+                Right () -> saveItem history (item { itemStateContent = content })
+            _ -> pure ()
   where
     url = Text.pack (feedUrl feed)
     webhook = feedWebhook feed

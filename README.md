@@ -21,5 +21,9 @@ across restarts. New feeds skip existing posts.
 mkdir -p data
 cp -n feeds.example.csv data/feeds.csv
 chmod 600 data/feeds.csv
-docker run -v "$PWD/data:/data" chrissx/rss2discord:latest
+docker run --stop-timeout 70 -v "$PWD/data:/data" chrissx/rss2discord:latest
 ```
+
+SIGTERM and SIGINT stop polling after the current item finishes and close the
+database. The 70-second stop timeout lets a request finish its 60-second timeout
+before Docker sends SIGKILL.
