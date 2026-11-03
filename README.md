@@ -17,6 +17,15 @@ With Docker, edit `data/feeds.csv` after setup. Restart after edits.
 Feed URLs must be unique. Keep `/data/history.sqlite3` to preserve history
 across restarts. New feeds skip existing posts.
 
+To send errors to an internal Discord channel, add this optional feed:
+
+```text
+internal://errors,https://discord.com/api/webhooks/ID/TOKEN
+```
+
+Repeated failures share an alert until recovery. Later failures create a new
+one.
+
 ```sh
 mkdir -p data
 cp -n feeds.example.csv data/feeds.csv

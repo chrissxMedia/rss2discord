@@ -7,7 +7,7 @@ build-type: Simple
 
 executable rss2discord
   main-is: Main.hs
-  other-modules: DiscordWebhook, Feed, FeedConfig, History, Paths_rss2discord
+  other-modules: DiscordWebhook, ErrorReporting, Feed, FeedConfig, History, Paths_rss2discord
   autogen-modules: Paths_rss2discord
   default-language: GHC2024
   ghc-options: -Wall -threaded

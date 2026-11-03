@@ -2,8 +2,8 @@
 
 module Feed (fetchEntries, pollFeed) where
 
-import Control.Exception.Safe (displayException, tryAny)
-import Control.Monad (forM, forM_, unless, when)
+import Control.Exception.Safe (SomeException, tryAny)
+import Control.Monad (forM, unless, when)
 import qualified Data.ByteString.Char8 as BS
 import Data.Char (isControl, isSpace)
 import Data.Maybe (fromMaybe)
@@ -50,28 +50,36 @@ fetchEntries manager feed = do
     valueOr fallback value = let text = Text.strip (fromMaybe "" value)
                              in if Text.null text then fallback else text
 
-pollFeed :: IO Bool -> Manager -> History -> FeedConfig -> IO ()
+pollFeed :: IO Bool -> Manager -> History -> FeedConfig -> IO [SomeException]
 pollFeed shouldStop manager history feed = do
   entries <- fetchEntries manager feed
   stopped <- shouldStop
-  unless stopped $ do
+  if stopped then pure [] else do
     initialized <- initializeFeed history url entries
-    unless initialized $ forM_ (reverse entries) $ \(ident, content) -> do
-      stopping <- shouldStop
-      unless stopping $ do
-        previous <- lookupItem history url ident
-        case previous of
-          Nothing -> do
-            messageId <- sendWebhook manager webhook content
-            -- shortcut: a crash between sending and saving can duplicate a message, revisit if Discord adds idempotent sends.
-            saveItem history (ItemState url ident (Just messageId) content)
-          Just item -> case itemStateMessageId item of
-            Just messageId | itemStateContent item /= content -> do
-              result <- tryAny (editWebhook manager webhook messageId content)
-              case result of
-                Left err -> putStrLn ("Feed " <> feedUrl feed <> ", item " <> Text.unpack ident <> ": " <> displayException err)
-                Right () -> saveItem history (item { itemStateContent = content })
-            _ -> pure ()
+    if initialized then pure [] else deliverEntries (reverse entries)
   where
     url = Text.pack (feedUrl feed)
     webhook = feedWebhook feed
+
+    deliverEntries [] = pure []
+    deliverEntries ((ident, content):rest) = do
+      stopping <- shouldStop
+      if stopping then pure [] else do
+        result <- tryAny $ do
+          previous <- lookupItem history url ident
+          case previous of
+            Nothing -> do
+              messageId <- sendWebhook manager webhook content
+              -- shortcut: a crash between sending and saving can duplicate a message, revisit if Discord adds idempotent sends.
+              saveItem history (ItemState url ident (Just messageId) content)
+              pure []
+            Just item -> case itemStateMessageId item of
+              Just messageId | itemStateContent item /= content -> do
+                edited <- tryAny (editWebhook manager webhook messageId content)
+                case edited of
+                  Left err -> pure [err]
+                  Right () -> saveItem history (item { itemStateContent = content }) >> pure []
+              _ -> pure []
+        case result of
+          Left err -> pure [err]
+          Right errors -> (errors <>) <$> deliverEntries rest

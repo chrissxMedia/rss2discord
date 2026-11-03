@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module History (History, ItemState (..), withHistory, initializeFeed, lookupItem, saveItem) where
+module History (History, ItemState (..), withHistory, initializeFeed, lookupItem, saveItem, deleteItem, deleteItemsExcept) where
 
 import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (liftIO)
@@ -52,3 +52,10 @@ saveItem history item = void $ runSqlConn
     [ ItemStateMessageId =. itemStateMessageId item
     , ItemStateContent =. itemStateContent item
     ]) history
+
+deleteItem :: History -> Text -> Text -> IO ()
+deleteItem history url ident = runSqlConn (deleteBy (UniqueFeedItem url ident)) history
+
+deleteItemsExcept :: History -> Text -> [Text] -> IO ()
+deleteItemsExcept history url idents = runSqlConn
+  (deleteWhere [ItemStateFeedUrl ==. url, ItemStateRssId /<-. idents]) history
