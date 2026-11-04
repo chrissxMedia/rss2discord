@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FeedConfig (FeedConfig (..), readFeeds) where
+module FeedConfig (FeedConfig (..), internalFeedUrl, readFeeds) where
 
 import Control.Exception.Safe (catchAny)
-import Control.Monad (foldM_, forM, forM_, unless, when)
+import Control.Monad (foldM_, forM, unless, when)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Csv as Csv
@@ -18,6 +18,9 @@ data FeedConfig = FeedConfig
   , feedWebhook :: String
   , feedPrefix :: Text
   }
+
+internalFeedUrl :: String
+internalFeedUrl = "internal://errors"
 
 readFeeds :: FilePath -> IO [FeedConfig]
 readFeeds file = do
@@ -39,9 +42,12 @@ readFeeds file = do
     rowMessage row message = "Feeds CSV row " <> show row <> ": " <> message
 
     readFeed row url webhook prefix = do
-      forM_ [("feed URL", url), ("webhook URL", webhook)] $ \(field, address) -> do
-        let message = rowMessage row ("Invalid " <> field <> ".")
-        request <- parseRequest address `catchAny` \_ -> fail message
-        when (BS.null (host request)) $ fail message
+      unless (url == internalFeedUrl) $ validateUrl row "feed URL" url
+      validateUrl row "webhook URL" webhook
       when (Text.length prefix >= 999) $ fail (rowMessage row "Prefix too long.")
       pure (FeedConfig url webhook prefix)
+
+    validateUrl row field address = do
+      let message = rowMessage row ("Invalid " <> field <> ".")
+      request <- parseRequest address `catchAny` \_ -> fail message
+      when (BS.null (host request)) $ fail message

@@ -1,6 +1,7 @@
 *
 !Main.hs
 !DiscordWebhook.hs
+!ErrorReporting.hs
 !Feed.hs
 !FeedConfig.hs
 !History.hs
